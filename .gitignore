@@ -1,0 +1,93 @@
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.so
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+*.manifest
+
+# Virtual Environment
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Testing / Linting
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage/
+
+# ==============================
+# IDE / Editor
+# ==============================
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+
+# ==============================
+# OS Files
+# ==============================
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# ==============================
+# Logs
+# ==============================
+*.log
+logs/
+
+# ==============================
+# Database
+# ==============================
+*.sqlite3
+*.db
+
+# ==============================
+# Docker
+# ==============================
+docker-compose.override.yml
+.docker/
+
+# ==============================
+# Infra (Terraform, etc.)
+# ==============================
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
+
+# ==============================
+# React / Node (Future Frontend)
+# ==============================
+node_modules/
+.npm
+.eslintcache
+.next/
+out/
+.nuxt/
+
+# ==============================
+# Misc
+# ==============================
+*.env.local
+.env.local.*
+*.bak
+.cache/
