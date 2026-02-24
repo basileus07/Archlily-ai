@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends
-from openai import conversations
-from openai.resources.chat import Chat
-from openai.types.responses import response
 from pydantic import BaseModel
-from app.services.llm_service import generate_response, SYSTEM_PROMPT
 from sqlalchemy.orm import Session
+
 from app.core.database import get_db
 from app.models.message import Message
 from app.models.user import User
 from app.models.session import Session
+from app.services.embedding_service import search_similar
+from app.services.llm_service import run_agent, SYSTEM_PROMPT
 
 router = APIRouter()
+
 
 
 class ChatRequest(BaseModel):
@@ -23,10 +23,10 @@ class ChatResponse(BaseModel):
     response: str
 
 
+
 @router.post("/chat", response_model=ChatResponse)
 def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
-    # get or create user
     user = db.query(User).filter(User.email == request.email).first()
 
     if not user:
@@ -35,7 +35,7 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
 
-    # create session id if not provided
+
     if request.session_id:
         session = db.query(Session).filter(Session.id == request.session_id).first()
     else:
@@ -44,16 +44,17 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(session)
 
-    # save user message
-    user_msg = Message(session_id=session.id, role="user", content=request.message)
+
+    user_msg = Message(
+        session_id=session.id,
+        role="user",
+        content=request.message
+    )
     db.add(user_msg)
     db.commit()
 
-    # fetch ALL previous
-    all_messages = db.query(Message).order_by(Message.id).all()
 
-    # Fetch session message only
-    session_message = (
+    session_messages = (
         db.query(Message)
         .filter(Message.session_id == session.id)
         .order_by(Message.id.desc())
@@ -61,21 +62,34 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         .all()
     )
 
-    #reverse because we fetched desc
-    session_message = list(reversed(session_message))
+    session_messages = list(reversed(session_messages))
 
-    # convert to openAI format
-    conversations = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    for msg in session_message:
-        conversations.append({"role": msg.role, "content": msg.content})
+    rag_context = search_similar(request.message)
+    rag_text = "\n\n".join(rag_context)
 
-    # Generate AI response
-    reply = generate_response(conversations)
 
-    # Save assistant response
-    ai_msg = Message(session_id=session.id, role="assistant", content=reply)
+    conversation = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": f"Relevant knowledge:\n{rag_text}"}
+    ]
+
+    for msg in session_messages:
+        conversation.append({
+            "role": msg.role,
+            "content": msg.content
+        })
+
+
+    final_answer = run_agent(conversation)
+
+ 
+    ai_msg = Message(
+        session_id=session.id,
+        role="assistant",
+        content=final_answer
+    )
     db.add(ai_msg)
     db.commit()
 
-    return ChatResponse(response=reply)
+    return ChatResponse(response=final_answer)

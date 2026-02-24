@@ -6,10 +6,12 @@ from app.models.user import User
 from app.models.message import  Message
 from app.models.session import Session
 
-app = FastAPI(title="ArchLily API")
+from app.services.embedding_service import load_knowledge
 
+load_knowledge()
+
+app = FastAPI(title="ArchLily API")
 Base.metadata.create_all(bind=engine)
-    
 app.include_router(chat_router)
 
 
