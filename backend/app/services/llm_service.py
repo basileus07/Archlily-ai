@@ -2,6 +2,7 @@ import os
 import json
 from dotenv import load_dotenv
 from openai import OpenAI
+from sqlalchemy import false
 from app.tools.storage_estimator import estimate_storage
 from app.tools.registry import TOOL_RESISTRY
 
@@ -14,26 +15,42 @@ TOOLS = [
     {
         "type": "function",
         "name": "estimate_storage",
-        "description": "Estimate storage for any event-based system",
+        "description": "Estimate storage for event-based systems",
         "parameters": {
             "type": "object",
             "properties": {
-                "events_per_day": {
-                    "type": "integer",
-                    "description": "Number of events per day",
-                },
-                "avg_event_size_kb": {
-                    "type": "number",
-                    "description": "Average size of each event in KB",
-                },
-                "retention_days": {
-                    "type": "integer",
-                    "description": "How many days data is stored",
-                },
+                "events_per_day": {"type": "integer"},
+                "avg_event_size_kb": {"type": "number"},
+                "retention_days": {"type": "integer"},
             },
             "required": ["events_per_day"],
         },
-    }
+    },
+    {
+        "type": "function",
+        "name": "estimate_qps",
+        "description": "Estimate average and peak QPS",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "events_per_day": {"type": "integer"},
+            },
+            "required": ["events_per_day"],
+        },
+    },
+    {
+        "type": "function",
+        "name": "estimate_infra_cost",
+        "description": "Estimate yearly infrastructure cost",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "storage_gb": {"type": "number"},
+                "cost_per_gb_per_month": {"type": "number"},
+            },
+            "required": ["storage_gb"],
+        },
+    },
 ]
 
 
@@ -68,48 +85,63 @@ Response Style:
 """
 
 
-def run_agent(conversation):
+def run_agent(conversation, max_step=5):
 
-    response = client.responses.create(
-        model="gpt-4o-mini", input=conversation, tools=TOOLS
-    )
+    current_conversation = conversation.copy()
 
-    for item in response.output:
-        if item.type == "function_call":
-            print(f"Tool called ✅")    
-            tool_name = item.name
+    for step in range(max_step):
+        print(f"\n---Agent step: {step+1}---")
 
-            if tool_name not in TOOL_RESISTRY:
-                raise Exception(f"Tool {tool_name} not registerd")
+        response = client.responses.create(
+            model="gpt-4o-mini", input=current_conversation, tools=TOOLS
+        )
 
-            args = item.arguments
+        tool_called = False
 
-            if isinstance(args, str):
-                args = json.loads(args)
+        for item in response.output:
 
-            tool_fn = TOOL_RESISTRY[tool_name]
-            result = tool_fn(**args)
+            # if model want to call tool
+            if item.type == "function_call":
 
-            # Send tool result back
-            tool_response = client.responses.create(
-                model="gpt-4o-mini",
-                input=conversation
-                + [
+                print(f"Tool called ✅")
+                tool_called = True
+                tool_name = item.name
+
+                print(f"Request tool: {tool_name}")
+
+                if tool_name not in TOOL_RESISTRY:
+                    raise Exception(f"Tool {tool_name} not registerd")
+
+                args = item.arguments
+                if isinstance(args, str):
+                    args = json.loads(args)
+
+                tool_fn = TOOL_RESISTRY[tool_name]
+                result = tool_fn(**args)
+
+                print(f"Tool result: {result}")
+
+                # Append tool call + tool output in converstion
+                current_conversation.append(
                     {
                         "type": "function_call",
                         "name": item.name,
                         "arguments": json.dumps(args),
                         "call_id": item.call_id,
-                    },
+                    }
+                )
+
+                current_conversation.append(
                     {
                         "type": "function_call_output",
                         "call_id": item.call_id,
                         "output": str(result),
-                    },
-                ],
-            )
+                    }
+                )
 
-            return tool_response.output_text
+                break
+        if not tool_called:
+            return response.output_text
 
     # If no tool used
     return response.output_text

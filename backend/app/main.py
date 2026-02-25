@@ -18,3 +18,4 @@ app.include_router(chat_router)
 @app.get("/")
 def root():
     return {"message": "ArchLily is running 🌸"}
+    
