@@ -1,4 +1,5 @@
 import os
+import time
 import json
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -9,6 +10,7 @@ from app.tools.registry import TOOL_REGISTRY
 from app.prompts.planner import PLANNER_PROMPT
 from app.prompts.synthesizer import SYNTHESIZER_PROMPT_TEMPLATE
 from app.prompts.system import SYSTEM_PROMPT
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 load_dotenv()
 
@@ -83,22 +85,56 @@ def run_planner(user_input):
     return response.output_text
 
 
+def execute_with_retry(tool_fn, args, retries=2, timeout=5):
+    for attempt in range(retries):
+        try:
+            return tool_fn(**args)
+        except Exception as e:
+            if attempt == retries - 1:
+                raise
+            time.sleep(1)
+
+
 def execute_plan(plan_json):
 
+    steps = plan_json["steps"]
     results = {}
+    completed = set()
 
-    for step in plan_json["steps"]:
+    while len(completed) < len(steps):
 
-        tool_name = step["tool"]
-        args = step["arguments"]
+        ready_steps = [
+            step
+            for step in steps
+            if step["id"] not in completed
+            and all(dep in completed for dep in step.get("depends_on", []))
+        ]
 
-        if tool_name not in TOOL_REGISTRY:
-            raise Exception(f"Tool {tool_name} not  registered")
+        if not ready_steps:
+            raise Exception("Circular dependency detected")
 
-        tool_fn = TOOL_REGISTRY[tool_name]
-        result = tool_fn(**args)
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            future_to_step = {}
 
-        results[tool_name] = result
+            for step in ready_steps:
+                tool_name = step["tool"]
+                args = step["arguments"]
+
+                if tool_name not in TOOL_REGISTRY:
+                    raise Exception(f"Tool {tool_name} not registered")
+
+                tool_fn = TOOL_REGISTRY[tool_name]
+
+                future = executor.submit(execute_with_retry, tool_fn, args)
+                future_to_step[future] = step
+
+            for future in as_completed(future_to_step):
+                step = future_to_step[future]
+                result = future.result()
+
+                results[step["id"]] = result
+                completed.add(step["id"])
+
     return results
 
 

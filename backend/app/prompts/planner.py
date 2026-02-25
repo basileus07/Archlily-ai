@@ -12,15 +12,22 @@ Available Tools:
 - estimate_storage(events_per_day, avg_event_size_kb, retention_days)
 - estimate_infra_cost(storage_gb)
 
-Output format:
+Return format:
 
 {
   "steps": [
     {
+      "id": "unique_step_id",
       "tool": "tool_name",
-      "arguments": { ... }
+      "arguments": {},
+      "depends_on": []
     }
-  ],
-  "requires_synthesis": true
+  ]
 }
+
+Rules:
+- If step does not depend on another, depends_on = []
+- If a step uses result of another, include dependency
+- Do NOT include explanation text.
+- JSON only.
 """
