@@ -2,9 +2,13 @@ import os
 import json
 from dotenv import load_dotenv
 from openai import OpenAI
+from openai.types.responses.response_output_message import Content
 from sqlalchemy import false
 from app.tools.storage_estimator import estimate_storage
-from app.tools.registry import TOOL_RESISTRY
+from app.tools.registry import TOOL_REGISTRY
+from app.prompts.planner import PLANNER_PROMPT
+from app.prompts.synthesizer import SYNTHESIZER_PROMPT_TEMPLATE
+from app.prompts.system import SYSTEM_PROMPT
 
 load_dotenv()
 
@@ -54,95 +58,138 @@ TOOLS = [
 ]
 
 
-SYSTEM_PROMPT = """
-You are ArchLily, an advanced AI System Design Interview Coach.
+def run_planner(user_input):
+    prompt = f"""
+    
+    {PLANNER_PROMPT}
 
-Your responsibilities:
-- Help users design scalable distributed systems.
-- Explain trade-offs clearly.
-- Think in terms of scale, consistency, latency, storage, caching, and cost.
-- Use structured reasoning.
+    User Request:
+    {user_input}
+    """
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=[
+            {
+                "role": "system",
+                "content": [{"type": "input_text", "text": prompt}],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": user_input}],
+            },
+        ],
+    )
 
-Tool Usage Policy:
-- If a question requires numeric estimation or calculation,
-  you MUST call the appropriate tool instead of guessing.
-- Never fabricate numerical results.
-- Use tools for deterministic computations.
-
-RAG Usage Policy:
-- Use the provided "Relevant knowledge" context when it is helpful.
-- Do not repeat the context verbatim.
-- Integrate it naturally into your reasoning.
-
-Interaction Policy:
-- Ask clarifying questions only if critical information is missing.
-- If sufficient data is provided, proceed with structured analysis.
-
-Response Style:
-- Be concise but technically deep.
-- Structure answers using sections where helpful.
-- Explain assumptions explicitly.
-"""
-
-
-def run_agent(conversation, max_step=5):
-
-    current_conversation = conversation.copy()
-
-    for step in range(max_step):
-        print(f"\n---Agent step: {step+1}---")
-
-        response = client.responses.create(
-            model="gpt-4o-mini", input=current_conversation, tools=TOOLS
-        )
-
-        tool_called = False
-
-        for item in response.output:
-
-            # if model want to call tool
-            if item.type == "function_call":
-
-                print(f"Tool called ✅")
-                tool_called = True
-                tool_name = item.name
-
-                print(f"Request tool: {tool_name}")
-
-                if tool_name not in TOOL_RESISTRY:
-                    raise Exception(f"Tool {tool_name} not registerd")
-
-                args = item.arguments
-                if isinstance(args, str):
-                    args = json.loads(args)
-
-                tool_fn = TOOL_RESISTRY[tool_name]
-                result = tool_fn(**args)
-
-                print(f"Tool result: {result}")
-
-                # Append tool call + tool output in converstion
-                current_conversation.append(
-                    {
-                        "type": "function_call",
-                        "name": item.name,
-                        "arguments": json.dumps(args),
-                        "call_id": item.call_id,
-                    }
-                )
-
-                current_conversation.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": item.call_id,
-                        "output": str(result),
-                    }
-                )
-
-                break
-        if not tool_called:
-            return response.output_text
-
-    # If no tool used
     return response.output_text
 
+
+def execute_plan(plan_json):
+
+    results = {}
+
+    for step in plan_json["steps"]:
+
+        tool_name = step["tool"]
+        args = step["arguments"]
+
+        if tool_name not in TOOL_REGISTRY:
+            raise Exception(f"Tool {tool_name} not  registered")
+
+        tool_fn = TOOL_REGISTRY[tool_name]
+        result = tool_fn(**args)
+
+        results[tool_name] = result
+    return results
+
+
+def run_synthesizer(user_input, tool_results):
+    SYNTHESIZER_PROMPT = f"""
+    {SYNTHESIZER_PROMPT_TEMPLATE}
+
+    User Request:
+    {user_input}
+
+    Tool Results:
+    {tool_results}
+    """
+    response = client.responses.create(model="gpt-4o-mini", input=SYNTHESIZER_PROMPT)
+
+    return response.output_text
+
+
+def run_agent(user_input):
+
+    # planning phase
+    plan_text = run_planner(user_input)
+    plan_json = json.loads(plan_text)
+
+    # Execution phase
+    tool_results = execute_plan(plan_json)
+
+    # synthesis phase
+    final_answer = run_synthesizer(user_input, tool_results)
+
+    return final_answer
+
+
+# old one before orchestrator pattern
+# def run_agent(conversation, max_step=5):
+
+#     current_conversation = conversation.copy()
+
+#     for step in range(max_step):
+#         print(f"\n---Agent step: {step+1}---")
+
+#         response = client.responses.create(
+#             model="gpt-4o-mini", input=current_conversation, tools=TOOLS
+#         )
+
+#         tool_called = False
+
+#         for item in response.output:
+
+#             # if model want to call tool
+#             if item.type == "function_call":
+
+#                 print(f"Tool called ✅")
+#                 tool_called = True
+#                 tool_name = item.name
+
+#                 print(f"Request tool: {tool_name}")
+
+#                 if tool_name not in TOOL_RESISTRY:
+#                     raise Exception(f"Tool {tool_name} not registerd")
+
+#                 args = item.arguments
+#                 if isinstance(args, str):
+#                     args = json.loads(args)
+
+#                 tool_fn = TOOL_RESISTRY[tool_name]
+#                 result = tool_fn(**args)
+
+#                 print(f"Tool result: {result}")
+
+#                 # Append tool call + tool output in converstion
+#                 current_conversation.append(
+#                     {
+#                         "type": "function_call",
+#                         "name": item.name,
+#                         "arguments": json.dumps(args),
+#                         "call_id": item.call_id,
+#                     }
+#                 )
+
+#                 current_conversation.append(
+#                     {
+#                         "type": "function_call_output",
+#                         "call_id": item.call_id,
+#                         "output": str(result),
+#                     }
+#                 )
+
+#                 break
+#         if not tool_called:
+#             return response.output_text
+
+#     # If no tool used
+#     return response.output_text

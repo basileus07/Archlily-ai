@@ -12,7 +12,6 @@ from app.services.llm_service import run_agent, SYSTEM_PROMPT
 router = APIRouter()
 
 
-
 class ChatRequest(BaseModel):
     email: str
     message: str
@@ -21,7 +20,6 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     response: str
-
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -35,7 +33,6 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(user)
 
-
     if request.session_id:
         session = db.query(Session).filter(Session.id == request.session_id).first()
     else:
@@ -44,15 +41,9 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(session)
 
-
-    user_msg = Message(
-        session_id=session.id,
-        role="user",
-        content=request.message
-    )
+    user_msg = Message(session_id=session.id, role="user", content=request.message)
     db.add(user_msg)
     db.commit()
-
 
     session_messages = (
         db.query(Message)
@@ -64,31 +55,28 @@ def chat_endpoint(request: ChatRequest, db: Session = Depends(get_db)):
 
     session_messages = list(reversed(session_messages))
 
-
     rag_context = search_similar(request.message)
     rag_text = "\n\n".join(rag_context)
 
-
     conversation = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "system", "content": f"Relevant knowledge:\n{rag_text}"}
+        {"role": "system", "content": f"Relevant knowledge:\n{rag_text}"},
     ]
 
     for msg in session_messages:
-        conversation.append({
-            "role": msg.role,
-            "content": msg.content
-        })
+        conversation.append({"role": msg.role, "content": msg.content})
 
+    contextual_input = f"""
+    Relevent knowedge: {rag_text}
 
-    final_answer = run_agent(conversation)
+    Conversation histor: {[ (m.role, m.content) for m in session_messages ]}
 
- 
-    ai_msg = Message(
-        session_id=session.id,
-        role="assistant",
-        content=final_answer
-    )
+    User request: {request.message}
+    """
+
+    final_answer = run_agent(contextual_input)
+
+    ai_msg = Message(session_id=session.id, role="assistant", content=final_answer)
     db.add(ai_msg)
     db.commit()
 
